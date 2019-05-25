@@ -12,6 +12,9 @@ find_package(Boost COMPONENTS program_options filesystem REQUIRED)
 include_directories(${Boost_INCLUDE_DIRS})
 include_directories(${FFTW_INCLUDE_DIRS})
 
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O0")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O0")
+
 add_executable(fourier_analyser
         src/main.cpp)
 
