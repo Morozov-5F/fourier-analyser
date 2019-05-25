@@ -13,6 +13,8 @@
 #include <boost/program_options.hpp>
 #include <boost/filesystem.hpp>
 
+#include <fftw3.h>
+
 using namespace boost::program_options;
 
 int main(int argc, const char * const argv[])
@@ -99,8 +101,26 @@ int main(int argc, const char * const argv[])
         std::copy(input, std::istream_iterator<double>(), std::back_inserter(data));
         if (data.empty()) {
             std::cout << "File " << path << " does not contain any data, skipping" << std::endl;
+            continue;
         }
-//        std::copy(data.begin(), data.end(), std::ostream_iterator<double>(std::cout, "\n"));
+        //std::copy(data.begin(), data.end(), std::ostream_iterator<double>(std::cout, "\n"));
+
+        auto fft_out = fftw_alloc_complex(data.size());
+
+        auto fftw_plan = fftw_plan_dft_r2c_1d((int)data.size(), data.data(), fft_out, FFTW_ESTIMATE);
+        fftw_execute(fftw_plan);
+
+        for (auto i = 1; i < data.size() / 2 + 1; ++i) {
+            fft_out[data.size() - i][0] = fft_out[i][0];
+            fft_out[data.size() - i][1] = -fft_out[i][1];
+        }
+
+        for (auto i = 0; i < data.size(); ++i) {
+            std::cout << data[i] << ": " << fft_out[i][0] << " " << fft_out[i][1] << std::endl;
+        }
+
+        fftw_destroy_plan(fftw_plan);
+        fftw_free(fft_out);
     }
 
     return 0;
