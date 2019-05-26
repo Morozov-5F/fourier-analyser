@@ -56,6 +56,12 @@ int main(int argc, const char * const argv[])
             std::cout << available_options << std::endl;
         } else if (!vm.count("file_list")) {
             throw error("Nothing to do - no file specified");
+        } else if (vm.count("out_directory")) {
+            if (!boost::filesystem::create_directory(out_dir)) {
+                if (!boost::filesystem::is_directory(out_dir)) {
+                    throw error("Unable to create directory " + out_dir);
+                }
+            }
         }
     }
     catch (const error &ex) {
@@ -101,6 +107,7 @@ int main(int argc, const char * const argv[])
         std::ifstream f(path.string());
         std::istream_iterator<double> input(f);
         std::copy(input, std::istream_iterator<double>(), std::back_inserter(data));
+        f.close();
         if (data.empty()) {
             std::cerr << "File " << path << " does not contain any data, skipping" << std::endl;
             continue;
@@ -128,21 +135,18 @@ int main(int argc, const char * const argv[])
         // could possibly erase data in the input array, so plans should be created
         // at first. But when used with FFTW_ESTIMATE FFTW does not touch the input
         // array but FFTW team doesn't give any promises on that.
-        auto fftw_plan = fftw_plan_dft_r2c_1d((int)data.size(), data.data(), fft_out, FFTW_ESTIMATE | FFTW_PRESERVE_INPUT);
+        auto fftw_plan = fftw_plan_dft_r2c_1d((int)data.size(), data.data(), fft_out, FFTW_ESTIMATE);
         fftw_execute(fftw_plan);
 
         for (auto i = 1; i < data.size() / 2 + 1; ++i) {
             fft_out[data.size() - i][0] = fft_out[i][0];
             fft_out[data.size() - i][1] = -fft_out[i][1];
         }
-
         fftw_destroy_plan(fftw_plan);
 
         std::vector<double> result(span, 0);
-        fftw_plan = fftw_plan_dft_c2r_1d(span, fft_out + start, result.data(), FFTW_ESTIMATE);
+        fftw_plan = fftw_plan_dft_c2r_1d(span, fft_out + start, result.data(), FFTW_ESTIMATE | FFTW_PRESERVE_INPUT);
         fftw_execute(fftw_plan);
-        fftw_free(fft_out);
-        fftw_destroy_plan(fftw_plan);
 
         // Normalize the data
         std::transform(result.begin(), result.end(), result.begin(),
@@ -161,22 +165,22 @@ int main(int argc, const char * const argv[])
 
         // Use set structure to simplify corner-cases handling such as there are two
         // elements in array and it
-        std::set<int> peaks;
+        std::vector<int> peaks;
         if (d_dx.size() == 1) {
-            peaks.insert(0);
+            peaks.push_back(0);
         }
 
         bool high_peak_detected = false;
         for (auto i = 1; i < d_dx.size(); ++i) {
             if (d_dx[i - 1] > 0 && d_dx[i] <= 0) {
                 high_peak_detected = true;
-                peaks.insert(i - 1);
+                peaks.push_back(i - 1);
 
                 continue;
             }
 
             if (high_peak_detected && d_dx[i] == 0) {
-                peaks.insert(i - 1);
+                peaks.push_back(i - 1);
 
                 continue;
             }
@@ -185,13 +189,36 @@ int main(int argc, const char * const argv[])
         }
 
         if ((high_peak_detected && *d_dx.end() == 0) || (d_dx.size() > 1 && *d_dx.end() > 0)) {
-            peaks.insert(d_dx.size() - 1);
+            peaks.push_back(d_dx.size() - 1);
         }
 
         std::vector<int> peak_distances(peaks.size(), 0);
         std::adjacent_difference(peaks.begin(), peaks.end(), peak_distances.begin());
 
         // std::cout << " OK" << std::endl;
+        // Write the results to files in the out_dir
+
+        std::string base_filename = out_dir +  "/" + path.stem().string();
+        std::cout << base_filename << std::endl;
+        std::ofstream out_stream(base_filename + "_fourier.txt");
+        for (auto i = 0; i < data.size(); ++ i) {
+            out_stream << fft_out[i][0] << " "  << fft_out[i][1] << " " << (fft_out[i][0] * fft_out[i][0] + fft_out[i][1] * fft_out[i][1]) << "\n";
+        }
+        out_stream.flush();
+        out_stream.close();
+
+        out_stream.open(base_filename +  "_window.txt");
+        std::copy(result.begin(), result.end(), std::ostream_iterator<double>(out_stream, "\n"));
+        out_stream.flush();
+        out_stream.close();
+
+        out_stream.open(base_filename + "_peaks.txt");
+        std::copy(peaks.begin(), peaks.end(), std::ostream_iterator<double>(out_stream, "\n"));
+        out_stream.flush();
+        out_stream.close();
+
+        fftw_free(fft_out);
+        fftw_destroy_plan(fftw_plan);
     }
 
     return 0;
