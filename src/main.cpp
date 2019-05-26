@@ -103,11 +103,10 @@ int main(int argc, const char * const argv[])
     }
 
     for (auto const& path : filename_set) {
-        std::vector<double> data;
         std::ifstream f(path.string());
-        std::istream_iterator<double> input(f);
-        std::copy(input, std::istream_iterator<double>(), std::back_inserter(data));
+        std::vector<double> data{std::istream_iterator<double>{f}, std::istream_iterator<double>{}};
         f.close();
+
         if (data.empty()) {
             std::cerr << "File " << path << " does not contain any data, skipping" << std::endl;
             continue;
@@ -144,24 +143,28 @@ int main(int argc, const char * const argv[])
         }
         fftw_destroy_plan(fftw_plan);
 
-        std::vector<double> result(span, 0);
-        fftw_plan = fftw_plan_dft_c2r_1d(span, fft_out + start, result.data(), FFTW_ESTIMATE | FFTW_PRESERVE_INPUT);
+        auto fft_out_new = new fftw_complex[data.size()]();
+        memcpy(fft_out + start, fft_out_new + start, span * sizeof(fftw_complex));
+
+        // memset(fft_out, 0, sizeof(fftw_complex) * start);
+        // memset(fft_out + end, 0, sizeof(fftw_complex) * (data.size() - end));
+        fftw_plan = fftw_plan_dft_c2r_1d(data.size(), fft_out_new, data.data(), FFTW_ESTIMATE);
         fftw_execute(fftw_plan);
 
         // Normalize the data
-        std::transform(result.begin(), result.end(), result.begin(),
+        std::transform(data.begin(), data.end(), data.begin(),
                        std::bind(std::multiplies<double>(), std::placeholders::_1, 1.0 / data.size()));
 
         // std::copy(result.begin(), result.end(), std::ostream_iterator<double>(std::cout, "\n"));
 
-        auto min = std::min_element(result.begin(), result.end());
-        auto max = std::max_element(result.begin(), result.end());
+        auto min = std::min_element(data.begin(), data.end());
+        auto max = std::max_element(data.begin(), data.end());
 
         // std::cout << *min << " " << *max << std::endl;
 
         // Find local maximums (peaks in signal)
-        std::vector<double> d_dx(result.size(), 0);
-        std::adjacent_difference(result.begin(), result.end(), d_dx.begin());
+        std::vector<double> d_dx(data.size(), 0);
+        std::adjacent_difference(data.begin(), data.end(), d_dx.begin());
 
         // Use set structure to simplify corner-cases handling such as there are two
         // elements in array and it
@@ -199,16 +202,17 @@ int main(int argc, const char * const argv[])
         // Write the results to files in the out_dir
 
         std::string base_filename = out_dir +  "/" + path.stem().string();
-        std::cout << base_filename << std::endl;
+        std::cout << " " << base_filename << std::endl;
         std::ofstream out_stream(base_filename + "_fourier.txt");
+
         for (auto i = 0; i < data.size(); ++ i) {
-            out_stream << fft_out[i][0] << " "  << fft_out[i][1] << " " << (fft_out[i][0] * fft_out[i][0] + fft_out[i][1] * fft_out[i][1]) << "\n";
+            out_stream << (fft_out[i][0] * fft_out[i][0] + fft_out[i][1] * fft_out[i][1]) << "\n";
         }
         out_stream.flush();
         out_stream.close();
 
         out_stream.open(base_filename +  "_window.txt");
-        std::copy(result.begin(), result.end(), std::ostream_iterator<double>(out_stream, "\n"));
+        std::copy(data.begin(), data.end(), std::ostream_iterator<double>(out_stream, "\n"));
         out_stream.flush();
         out_stream.close();
 
@@ -219,6 +223,7 @@ int main(int argc, const char * const argv[])
 
         fftw_free(fft_out);
         fftw_destroy_plan(fftw_plan);
+        delete [] fft_out_new;
     }
 
     return 0;
