@@ -11,6 +11,7 @@
 #include <fstream>
 #include <functional>
 #include <numeric>
+#include <complex>
 
 #include <boost/program_options.hpp>
 #include <boost/filesystem.hpp>
@@ -126,36 +127,34 @@ int main(int argc, const char * const argv[])
             std::cerr << "Incorrect settings for data start and end" << std::endl;
         }
 
-        // std::cout << "FFT " << path.string() << ":" << std::endl;
-
-        auto fft_out = fftw_alloc_complex(data.size());
-
+        std::vector<std::complex<double>> fft_out(data.size());
         // TODO: This is not entirely correct. As the FFTW spec says, plan creation
         // could possibly erase data in the input array, so plans should be created
         // at first. But when used with FFTW_ESTIMATE FFTW does not touch the input
         // array but FFTW team doesn't give any promises on that.
-        auto fftw_plan = fftw_plan_dft_r2c_1d((int)data.size(), data.data(), fft_out, FFTW_ESTIMATE);
+        auto fftw_plan = fftw_plan_dft_r2c_1d(data.size(), data.data(),
+                                              reinterpret_cast<fftw_complex *>(fft_out.data()), FFTW_ESTIMATE);
         fftw_execute(fftw_plan);
 
-        for (auto i = 1; i < data.size() / 2 + 1; ++i) {
-            fft_out[data.size() - i][0] = fft_out[i][0];
-            fft_out[data.size() - i][1] = -fft_out[i][1];
+        for (auto i = 1; i < fft_out.size() / 2 + 1; ++i) {
+            fft_out[fft_out.size() - i] = std::conj(fft_out[i]);
         }
         fftw_destroy_plan(fftw_plan);
 
-        auto fft_out_new = new fftw_complex[data.size()]();
-        memcpy(fft_out + start, fft_out_new + start, span * sizeof(fftw_complex));
+        std::vector<double> PSD(fft_out.size(), 0);
+        std::transform(fft_out.begin(), fft_out.end(), PSD.begin(),
+                       [fft_out](std::complex<double> x) { return std::norm(x) / fft_out.size();});
 
-        // memset(fft_out, 0, sizeof(fftw_complex) * start);
-        // memset(fft_out + end, 0, sizeof(fftw_complex) * (data.size() - end));
-        fftw_plan = fftw_plan_dft_c2r_1d(data.size(), fft_out_new, data.data(), FFTW_ESTIMATE);
+        std::vector<std::complex<double>> fft_out_new(fft_out.size(), 0);
+        std::copy(fft_out.begin() + start, fft_out.begin() + end, fft_out_new.begin() + start);
+
+        fftw_plan = fftw_plan_dft_c2r_1d(fft_out_new.size(), reinterpret_cast<fftw_complex *>(fft_out_new.data()),
+                                         data.data(), FFTW_ESTIMATE);
         fftw_execute(fftw_plan);
 
         // Normalize the data
         std::transform(data.begin(), data.end(), data.begin(),
                        std::bind(std::multiplies<double>(), std::placeholders::_1, 1.0 / data.size()));
-
-        // std::copy(result.begin(), result.end(), std::ostream_iterator<double>(std::cout, "\n"));
 
         auto min = std::min_element(data.begin(), data.end());
         auto max = std::max_element(data.begin(), data.end());
@@ -178,13 +177,11 @@ int main(int argc, const char * const argv[])
             if (d_dx[i - 1] > 0 && d_dx[i] <= 0) {
                 high_peak_detected = true;
                 peaks.push_back(i - 1);
-
                 continue;
             }
 
             if (high_peak_detected && d_dx[i] == 0) {
                 peaks.push_back(i - 1);
-
                 continue;
             }
 
@@ -198,16 +195,12 @@ int main(int argc, const char * const argv[])
         std::vector<int> peak_distances(peaks.size(), 0);
         std::adjacent_difference(peaks.begin(), peaks.end(), peak_distances.begin());
 
-        // std::cout << " OK" << std::endl;
         // Write the results to files in the out_dir
-
         std::string base_filename = out_dir +  "/" + path.stem().string();
         std::cout << " " << base_filename << std::endl;
-        std::ofstream out_stream(base_filename + "_fourier.txt");
 
-        for (auto i = 0; i < data.size(); ++ i) {
-            out_stream << (fft_out[i][0] * fft_out[i][0] + fft_out[i][1] * fft_out[i][1]) << "\n";
-        }
+        std::ofstream out_stream(base_filename + "_fourier.txt");
+        std::copy(PSD.begin(), PSD.end(), std::ostream_iterator<double>(out_stream, "\n"));
         out_stream.flush();
         out_stream.close();
 
@@ -221,9 +214,7 @@ int main(int argc, const char * const argv[])
         out_stream.flush();
         out_stream.close();
 
-        fftw_free(fft_out);
         fftw_destroy_plan(fftw_plan);
-        delete [] fft_out_new;
     }
 
     return 0;
